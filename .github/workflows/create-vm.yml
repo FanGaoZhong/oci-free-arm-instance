@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '*/10 * * * *'
+concurrency:
+  group: oci-a1-catcher
+  cancel-in-progress: true
 
 jobs:
   create-vm:
@@ -11,9 +14,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache OCI CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/lib/python*/site-packages
+          key: oci-cli-v1
+
       - name: Install OCI CLI
         run: |
-          pip install oci-cli
+          pip install --upgrade oci-cli
           mkdir -p ~/.oci
           cat > ~/.oci/config << EOF
           [DEFAULT]
@@ -24,7 +33,7 @@ jobs:
           region=${{ secrets.OCI_CLI_REGION }}
           EOF
           echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/private_key
-          chmod 600 ~/.oci/private_key
+          chmod 400 ~/.oci/private_key
 
       - name: Try launch instance
         id: launch
@@ -32,6 +41,8 @@ jobs:
           set +e
           AD_LIST=("EMIr:PHX-AD-1" "EMIr:PHX-AD-2" "EMIr:PHX-AD-3")
           success=0
+          INSTANCE_OCID=""
+          PUBLIC_IP=""
           for AD in "${AD_LIST[@]}"; do
             echo "==== Trying AD: $AD ===="
             RESULT=$(oci compute instance launch \
@@ -47,15 +58,37 @@ jobs:
               --boot-volume-size-in-gbs 200 2>&1)
             echo "$RESULT"
             if echo "$RESULT" | grep -q "ocid1.instance"; then
+              INSTANCE_OCID=$(echo "$RESULT" | jq -r '.data.id')
               success=1
               break
             fi
+            if echo "$RESULT" | grep -q "LimitExceeded"; then
+              echo "::warning::已达到A1.Flex免费配额上限，停止尝试"
+              break
+            fi
+            sleep 2
           done
           echo "success=$success" >> $GITHUB_OUTPUT
+          echo "instance_ocid=$INSTANCE_OCID" >> $GITHUB_OUTPUT
 
-      - name: Server酱Turbo通知（抢到成功，适配方糖服务号）
+      - name: 获取公网IP（实例刚创建需要等一小会）
+        if: steps.launch.outputs.success == '1'
+        run: |
+          sleep 15
+          PUBLIC_IP=$(oci compute instance list-vnics --instance-id ${{ steps.launch.outputs.instance_ocid }} | jq -r '.data[0]."public-ip"')
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+        id: getip
+
+      - name: Server酱Turbo通知（抢到成功）
         if: steps.launch.outputs.success == '1'
         run: |
           curl -sS -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SENDKEY }}.send" \
           -d "title=🎉 OCI A1.Flex抢机成功" \
-          -d "desp=实例创建成功！立刻去OCI控制台查看，记得马上禁用Workflow，并且删除OCI的API密钥！\n日志链接：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          -d "desp=实例OCID：${{ steps.launch.outputs.instance_ocid }}\n公网IP：${{ steps.getip.outputs.public_ip }}\n⚠️ 立刻去OCI控制台查看，马上禁用Workflow，并且删除OCI的API密钥！\n日志链接：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Server酱通知（配额满）
+        if: steps.launch.outputs.success != '1'
+        run: |
+          curl -sS -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SENDKEY }}.send" \
+          -d "title=⏳ OCI A1.Flex抢机轮询" \
+          -d "desp=本轮无可用容量，继续等待下一轮\n日志链接：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
