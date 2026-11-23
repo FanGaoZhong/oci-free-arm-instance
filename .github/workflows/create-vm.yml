@@ -34,7 +34,7 @@ jobs:
           EOF
           echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/private_key
           chmod 400 ~/.oci/private_key
-
+          
       - name: Try launch instance
         id: launch
         run: |
@@ -42,7 +42,6 @@ jobs:
           AD_LIST=("EMIr:PHX-AD-1" "EMIr:PHX-AD-2" "EMIr:PHX-AD-3")
           success=0
           INSTANCE_OCID=""
-          PUBLIC_IP=""
           for AD in "${AD_LIST[@]}"; do
             echo "==== Trying AD: $AD ===="
             RESULT=$(oci compute instance launch \
@@ -63,7 +62,7 @@ jobs:
               break
             fi
             if echo "$RESULT" | grep -q "LimitExceeded"; then
-              echo "::warning::已达到A1.Flex免费配额上限，停止尝试"
+              echo "::warning::配额已满，停止尝试"
               break
             fi
             sleep 2
