@@ -53,13 +53,9 @@ jobs:
           done
           echo "success=$success" >> $GITHUB_OUTPUT
 
-      - name: PushPlus微信通知（抢到成功）
+      - name: Server酱Turbo通知（抢到成功，适配方糖服务号）
         if: steps.launch.outputs.success == '1'
         run: |
-          curl -X POST https://pushplus.hxtrip.com/send \
-          -H "Content-Type: application/json" \
-          -d '{
-            "token": "${{ secrets.PUSHPLUS_TOKEN }}",
-            "title": "🎉 OCI A1.Flex抢机成功",
-            "content": "实例已经创建成功！立刻去OCI控制台查看，记得马上禁用这个Workflow，并且删除OCI的API密钥！\nAction日志：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }'
+          curl -sS -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SENDKEY }}.send" \
+          -d "title=🎉 OCI A1.Flex抢机成功" \
+          -d "desp=实例创建成功！立刻去OCI控制台查看，记得马上禁用Workflow，并且删除OCI的API密钥！\n日志链接：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
