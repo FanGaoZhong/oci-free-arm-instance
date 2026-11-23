@@ -1,0 +1,65 @@
+name: Try to Create OCI VM
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+
+jobs:
+  create-vm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: |
+          pip install oci-cli
+          mkdir -p ~/.oci
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          tenancy=${{ secrets.OCI_CLI_TENANCY }}
+          user=${{ secrets.OCI_CLI_USER }}
+          fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
+          key_file=~/.oci/private_key
+          region=${{ secrets.OCI_CLI_REGION }}
+          EOF
+          echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/private_key
+          chmod 600 ~/.oci/private_key
+
+      - name: Try launch instance
+        id: launch
+        run: |
+          set +e
+          AD_LIST=("EMIr:PHX-AD-1" "EMIr:PHX-AD-2" "EMIr:PHX-AD-3")
+          success=0
+          for AD in "${AD_LIST[@]}"; do
+            echo "==== Trying AD: $AD ===="
+            RESULT=$(oci compute instance launch \
+              --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }} \
+              --availability-domain "${AD}" \
+              --display-name "free-a1" \
+              --shape "VM.Standard.A1.Flex" \
+              --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+              --image-id ${{ secrets.IMAGE_ID }} \
+              --subnet-id ${{ secrets.SUBNET_ID }} \
+              --assign-public-ip true \
+              --ssh-authorized-keys-content "${{ secrets.SSH_PUBLIC_KEY }}" \
+              --boot-volume-size-in-gbs 200 2>&1)
+            echo "$RESULT"
+            if echo "$RESULT" | grep -q "ocid1.instance"; then
+              success=1
+              break
+            fi
+          done
+          echo "success=$success" >> $GITHUB_OUTPUT
+
+      - name: PushPlus微信通知（抢到成功）
+        if: steps.launch.outputs.success == '1'
+        run: |
+          curl -X POST https://pushplus.hxtrip.com/send \
+          -H "Content-Type: application/json" \
+          -d '{
+            "token": "${{ secrets.PUSHPLUS_TOKEN }}",
+            "title": "🎉 OCI A1.Flex抢机成功",
+            "content": "实例已经创建成功！立刻去OCI控制台查看，记得马上禁用这个Workflow，并且删除OCI的API密钥！\nAction日志：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }'
